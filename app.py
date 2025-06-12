@@ -1,9 +1,40 @@
 from flask import Flask, request, jsonify
-from sentence_transformers import SentenceTransformer
-from sklearn.metrics.pairwise import cosine_similarity
+from dotenv import load_dotenv
+import requests
+import os
+
+load_dotenv()
 
 app = Flask(__name__)
-model = SentenceTransformer('all-MiniLM-L6-v2')
+
+# Set your Hugging Face API Token as an environment variable called HF_TOKEN
+HF_TOKEN = os.environ.get("HF_TOKEN")
+if not HF_TOKEN:
+    raise RuntimeError("Missing Hugging Face API token in environment variable 'HF_TOKEN'")
+
+API_URL = "https://router.huggingface.co/hf-inference/models/sentence-transformers/all-MiniLM-L6-v2/pipeline/sentence-similarity"
+
+HEADERS = {
+    "Authorization": f"Bearer {HF_TOKEN}"
+}
+
+def get_similarity_matrix(goals):
+    matrix = [[0.0 for _ in goals] for _ in goals]
+    for i, goal in enumerate(goals):
+        payload = {
+            "inputs": {
+                "source_sentence": goal,
+                "sentences": goals
+            }
+        }
+        try:
+            response = requests.post(API_URL, headers=HEADERS, json=payload, timeout=10)
+            response.raise_for_status()
+            similarities = response.json()
+            matrix[i] = similarities
+        except requests.exceptions.RequestException as e:
+            raise RuntimeError(f"Error fetching similarity scores: {e}")
+    return matrix
 
 @app.route('/match-goals', methods=['POST'])
 def match_goals():
@@ -17,8 +48,10 @@ def match_goals():
         return jsonify({"error": "At least two users are required for matching."}), 400
 
     goals = [user['goal'] for user in users]
-    embeddings = model.encode(goals)
-    sim_matrix = cosine_similarity(embeddings)
+    try:
+        sim_matrix = get_similarity_matrix(goals)
+    except RuntimeError as err:
+        return jsonify({"error": str(err)}), 500
 
     paired_indices = set()
     pairs = []
@@ -29,7 +62,7 @@ def match_goals():
         for i in range(len(goals)):
             if i in paired_indices:
                 continue
-            for j in range(i+1, len(goals)):
+            for j in range(i + 1, len(goals)):
                 if j in paired_indices:
                     continue
                 if sim_matrix[i][j] > max_sim:
