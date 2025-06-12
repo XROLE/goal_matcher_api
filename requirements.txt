@@ -1,5 +1,7 @@
 flask
 requests
-scikit-learn
 gunicorn
+scikit-learn
+python-dotenv
+
 
